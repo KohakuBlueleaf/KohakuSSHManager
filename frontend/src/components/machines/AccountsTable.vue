@@ -21,6 +21,7 @@
           <td class="td-cell font-mono text-xs">{{ acct.uid ?? "—" }}</td>
           <td class="td-cell">
             <div class="flex flex-wrap items-center gap-1">
+              <span v-if="acct.is_management" class="gem-badge bg-iolite/15 text-iolite dark:bg-iolite/25 dark:text-iolite-light" title="Kohaku connects to this machine through this account"> management </span>
               <StatusBadge :state="acct.state" />
               <StatusBadge v-if="acct.present === false" state="absent" label="absent" />
               <span v-if="acct.locked" class="gem-badge bg-warm-200/70 text-warm-600 dark:bg-warm-700/50 dark:text-warm-300"> locked </span>
@@ -43,7 +44,8 @@
             <span v-if="noOwnerCount(acct)" class="ml-1 gem-badge bg-warm-200/70 text-warm-600 dark:bg-warm-700/50 dark:text-warm-300" :title="`${noOwnerCount(acct)} key(s) with no linked panel user`"> {{ noOwnerCount(acct) }} no owner </span>
           </td>
           <td v-if="admin" class="td-cell text-right whitespace-nowrap">
-            <el-dropdown trigger="click" @command="(cmd) => $emit(cmd, acct)">
+            <span v-if="acct.is_management" class="text-warm-400 dark:text-warm-500 text-xs italic">protected</span>
+            <el-dropdown v-else trigger="click" @command="(cmd) => $emit(cmd, acct)">
               <button class="btn-ghost inline-flex items-center gap-1">Manage <span class="i-carbon-chevron-down" /></button>
               <template #dropdown>
                 <el-dropdown-menu>

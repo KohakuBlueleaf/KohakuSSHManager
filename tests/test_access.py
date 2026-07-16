@@ -141,6 +141,29 @@ def test_approve_privileged_account_refused(client, fake):
     assert fm.authorized.get("root", "").strip() == ""
 
 
+def test_management_account_is_flagged_and_protected(client, fake):
+    # After refresh the management account appears in the list, flagged as
+    # management, and its delete/group operations are rejected.
+    fm, machine = _setup(client, fake, address="10.0.2.4", name="pnode4")
+    client.post(f"/api/machines/{machine['id']}/refresh")
+    accounts = client.get(f"/api/machines/{machine['id']}/accounts").json()
+    mgmt = next(a for a in accounts if a["username"] == "mgr")
+    assert mgmt["is_management"] is True
+
+    # Delete and group-change are blocked (409); adopt/unlink are not.
+    deleted = client.request(
+        "DELETE",
+        f"/api/accounts/{mgmt['id']}",
+        json={"confirm": "mgr", "delete_home": False},
+    )
+    assert deleted.status_code == 409
+    grouped = client.post(
+        f"/api/accounts/{mgmt['id']}/groups", json={"add": ["docker"]}
+    )
+    assert grouped.status_code == 409
+    assert "mgr" in fm.accounts  # untouched
+
+
 def test_member_cannot_see_others_data(client, fake):
     _setup(client, fake, address="10.0.1.3", name="anode3")
     alice = create_user(client, "alice", "pw")

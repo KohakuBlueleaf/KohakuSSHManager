@@ -129,6 +129,7 @@ def serialize_account(account: LocalAccount) -> dict:
         "id": account.id,
         "machine_id": account.machine_id,
         "username": account.username,
+        "is_management": account.username == account.machine.management_user,
         "uid": account.uid,
         "gid": account.gid,
         "home": account.home,
@@ -177,6 +178,16 @@ def _get_account(account_id: int) -> LocalAccount:
     if account is None:
         raise HTTPException(status_code=404, detail="account not found")
     return account
+
+
+def _reject_if_management(account: LocalAccount) -> None:
+    """Block operations that could lock Kohaku out of the machine."""
+    if account.username == account.machine.management_user:
+        raise HTTPException(
+            status_code=409,
+            detail="this is the machine's management account and cannot be "
+            "deleted or have its groups changed from the panel",
+        )
 
 
 # --- Machine CRUD ----------------------------------------------------------
@@ -359,6 +370,7 @@ def account_groups(
     account_id: int, body: GroupsRequest, principal: Principal = Depends(require_admin)
 ):
     account = _get_account(account_id)
+    _reject_if_management(account)
     action = services.set_account_groups(account, body.add, body.remove, principal.name)
     return {"action_id": action.id}
 
@@ -370,6 +382,7 @@ def delete_account(
     principal: Principal = Depends(require_admin),
 ):
     account = _get_account(account_id)
+    _reject_if_management(account)
     if body.confirm != account.username:
         raise HTTPException(
             status_code=400, detail="confirm must equal the account username"

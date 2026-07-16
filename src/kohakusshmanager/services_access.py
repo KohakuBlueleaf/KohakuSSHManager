@@ -2,6 +2,7 @@
 
 from kohakusshmanager import remote, webhook
 from kohakusshmanager.db import db, utcnow
+from kohakusshmanager.errors import ConflictError
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import (
     AccessRequest,
@@ -295,9 +296,15 @@ def revoke_user_key(sshkey: SSHKey, actor: str) -> list[RemoteAction]:
 # --- Account groups / deletion --------------------------------------------
 
 
+def _reject_if_management(account: LocalAccount) -> None:
+    if account.username == account.machine.management_user:
+        raise ConflictError("refusing to modify the machine's management account")
+
+
 def set_account_groups(
     account: LocalAccount, add: list[str], remove: list[str], actor: str
 ) -> RemoteAction:
+    _reject_if_management(account)
     acc_id = account.id
 
     def fn():
@@ -330,6 +337,7 @@ def set_account_groups(
 def delete_local_account(
     account: LocalAccount, delete_home: bool, actor: str
 ) -> RemoteAction:
+    _reject_if_management(account)
     acc_id = account.id
 
     def fn():
