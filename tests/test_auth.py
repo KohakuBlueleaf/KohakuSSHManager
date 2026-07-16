@@ -77,6 +77,74 @@ def test_session_expiry(client):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_profile_update(client):
+    login_admin(client)
+    create_user(client, "erin", "pw123")
+    client.post("/api/auth/logout")
+    client.post("/api/auth/login", json={"username": "erin", "password": "pw123"})
+
+    resp = client.patch(
+        "/api/auth/profile",
+        json={
+            "display_name": "Erin R",
+            "default_account": "erin_r",
+            "username": "erinr",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "erinr"
+    assert body["display_name"] == "Erin R"
+    assert body["default_account"] == "erin_r"
+    # /me reflects the change (session survives the rename).
+    assert client.get("/api/auth/me").json()["name"] == "erinr"
+
+
+def test_profile_rejects_bad_values(client):
+    login_admin(client)
+    create_user(client, "frank", "pw123")
+    create_user(client, "grace", "pw123")
+    client.post("/api/auth/logout")
+    client.post("/api/auth/login", json={"username": "frank", "password": "pw123"})
+
+    # Duplicate username.
+    assert (
+        client.patch("/api/auth/profile", json={"username": "grace"}).status_code == 409
+    )
+    # Reserved admin principal name.
+    assert (
+        client.patch("/api/auth/profile", json={"username": "__token__"}).status_code
+        == 400
+    )
+    # Invalid Unix account name.
+    assert (
+        client.patch(
+            "/api/auth/profile", json={"default_account": "Bad Name!"}
+        ).status_code
+        == 400
+    )
+
+
+def test_default_account_drives_request_target(client, fake):
+    from .conftest import enroll_machine, login_user, register_machine
+
+    login_admin(client)
+    fm = fake.add("10.0.9.1")
+    fm.add_account("mgr", 1000)
+    client.get("/api/machines/management-key")
+    machine = register_machine(client, "dnode", "10.0.9.1", mgmt_user="mgr")
+    enroll_machine(client, machine["id"], fm.host_fingerprint)
+    create_user(client, "heidi", "pw123")
+
+    client.post("/api/auth/logout")
+    login_user(client, "heidi", "pw123")
+    client.patch("/api/auth/profile", json={"default_account": "heidi_lab"})
+    created = client.post("/api/access/requests", json={"machine_id": machine["id"]})
+    assert created.status_code == 201
+    # Target defaults to the configured account, not the panel username.
+    assert created.json()["username"] == "heidi_lab"
+
+
 def test_password_change(client):
     login_admin(client)
     create_user(client, "dave", "oldpw")

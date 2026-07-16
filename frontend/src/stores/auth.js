@@ -19,6 +19,7 @@ export const useAuthStore = defineStore("auth", {
     role: (state) => state.me?.role ?? null,
     name: (state) => state.me?.name ?? "",
     displayName: (state) => state.me?.display_name || state.me?.name || "",
+    defaultAccount: (state) => state.me?.default_account ?? "",
   },
 
   actions: {
@@ -39,6 +40,16 @@ export const useAuthStore = defineStore("auth", {
       // Let the caller surface the error toast; on success cache identity.
       this.me = await authAPI.login({ username, password })
       return this.me
+    },
+
+    async updateProfile(body) {
+      // Returns the refreshed principal; keep the cached identity in sync.
+      this.me = await authAPI.updateProfile(body)
+      return this.me
+    },
+
+    async changePassword(body) {
+      return authAPI.changePassword(body)
     },
 
     async logout() {

@@ -68,6 +68,7 @@ const items = [
   { to: "/groups", label: "Groups", icon: "i-carbon-group", show: () => auth.isAdmin },
   { to: "/storage", label: "Storage", icon: "i-carbon-datastore", show: () => auth.isAdmin },
   { to: "/audit", label: "Audit", icon: "i-carbon-catalog", show: () => auth.isAdmin },
+  { to: "/settings", label: "Settings", icon: "i-carbon-settings", show: () => !auth.isAdmin },
 ]
 
 const visibleItems = computed(() => items.filter((i) => i.show()))

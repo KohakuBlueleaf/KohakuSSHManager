@@ -56,6 +56,9 @@ class User(BaseModel):
     password_hash = CharField()
     role = CharField(default="member")  # member | leader
     enabled = BooleanField(default=True)
+    # Preferred Unix account name on managed machines; used as the default
+    # target when the user requests access. Empty => fall back to `username`.
+    default_account = CharField(default="")
 
 
 class Session(BaseModel):

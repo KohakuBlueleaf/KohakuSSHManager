@@ -25,6 +25,9 @@ class AppConfig(BaseModel):
     frontend_dist: str = "./frontend/dist"
     log_level: str = "INFO"
     log_dir: str | None = None
+    # Per-request HTTP access logs. Off by default to avoid log flood; the
+    # remaining uvicorn logs are still routed through the app logger.
+    access_log: bool = False
 
 
 class AuthConfig(BaseModel):
@@ -91,6 +94,13 @@ def _get_int(name: str, default: int) -> int:
         return default
 
 
+def _get_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _load_toml() -> dict:
     path = os.environ.get("KSM_CONFIG", "config.toml")
     if tomllib is None:
@@ -117,6 +127,7 @@ def load_config() -> Config:
     cfg.app.frontend_dist = _get("KSM_FRONTEND_DIST", cfg.app.frontend_dist)
     cfg.app.log_level = _get("KSM_LOG_LEVEL", cfg.app.log_level)
     cfg.app.log_dir = _get("KSM_LOG_DIR", cfg.app.log_dir)
+    cfg.app.access_log = _get_bool("KSM_ACCESS_LOG", cfg.app.access_log)
 
     # --- Auth / secrets (env inline wins; else *_FILE; else toml default) ---
     secret = _get("KSM_SECRET") or _read_secret_file(_get("KSM_SECRET_FILE"))

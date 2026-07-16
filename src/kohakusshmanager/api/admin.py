@@ -19,13 +19,29 @@ from kohakusshmanager.models import (
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+def _count_by(model, field) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in model.select():
+        value = getattr(row, field)
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
 @router.get("/overview")
 def overview(principal: Principal = Depends(require_admin)):
-    machines_by_status: dict[str, int] = {}
-    for machine in Machine.select():
-        machines_by_status[machine.status] = (
-            machines_by_status.get(machine.status, 0) + 1
-        )
+    machines_by_status = _count_by(Machine, "status")
+    keys_by_state = _count_by(SSHKey, "state")
+
+    users = list(User.select())
+    users_by_role: dict[str, int] = {}
+    users_disabled = 0
+    for user in users:
+        users_by_role[user.role] = users_by_role.get(user.role, 0) + 1
+        if not user.enabled:
+            users_disabled += 1
+
+    requests_by_state = _count_by(AccessRequest, "state")
+
     since = utcnow() - timedelta(hours=24)
     failed_actions = (
         RemoteAction.select()
@@ -34,13 +50,19 @@ def overview(principal: Principal = Depends(require_admin)):
     )
     return {
         "machines_by_status": machines_by_status,
-        "machines_total": Machine.select().count(),
-        "pending_requests": AccessRequest.select()
-        .where(AccessRequest.state == "pending")
-        .count(),
+        "machines_total": len(list(Machine.select())),
+        "machines_enrolled": Machine.select()
+        .where(Machine.enrolled == True)
+        .count(),  # noqa: E712
+        "keys_by_state": keys_by_state,
+        "keys_total": sum(keys_by_state.values()),
+        "no_owner_keys": keys_by_state.get("no_owner", 0),
+        "users_total": len(users),
+        "users_by_role": users_by_role,
+        "users_disabled": users_disabled,
+        "requests_by_state": requests_by_state,
+        "pending_requests": requests_by_state.get("pending", 0),
         "failed_actions_24h": failed_actions,
-        "users_total": User.select().count(),
-        "no_owner_keys": SSHKey.select().where(SSHKey.state == "no_owner").count(),
     }
 
 

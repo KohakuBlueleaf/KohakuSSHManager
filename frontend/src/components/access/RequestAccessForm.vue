@@ -4,8 +4,14 @@
       <KSelect v-model="machineId" :options="machineOptions" placeholder="Select a machine…" />
     </KField>
 
-    <KField label="Target account name" :hint="`Optional. Defaults to your panel name (${defaultUsername || 'your username'}).`">
+    <KField v-if="accountEditable" label="Target account name" hint="Optional. The Unix account to grant access to.">
       <KInput v-model="username" :placeholder="defaultUsername || 'unix username'" />
+    </KField>
+
+    <KField v-else label="Target account name" hint="The Unix account you will be granted access to. Change it in Settings → Default machine account.">
+      <div class="input-field flex items-center bg-warm-100/60 dark:bg-warm-800/40 text-warm-600 dark:text-warm-300 font-mono cursor-not-allowed">
+        {{ defaultUsername || "your username" }}
+      </div>
     </KField>
 
     <div class="flex justify-end">
@@ -28,6 +34,9 @@ import { accessAPI } from "@/utils/api"
 const props = defineProps({
   machines: { type: Array, default: () => [] },
   defaultUsername: { type: String, default: "" },
+  // Non-admins can only request under their configured default account, so the
+  // target is read-only for them (edited via Settings). Admins may type one.
+  accountEditable: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(["requested"])

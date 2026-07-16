@@ -55,15 +55,18 @@ def create_request(
     if machine is None:
         raise HTTPException(status_code=404, detail="machine not found")
 
-    # Non-admins may only request access under their own panel username; a
-    # body-supplied target could otherwise name root, another user, or the
-    # management account. Admins may target a specific existing account.
+    # Non-admins may only request access under their configured default account
+    # (or their panel username if unset); a body-supplied target could otherwise
+    # name root, another user, or the management account. Admins may target a
+    # specific existing account.
     if principal.is_admin:
         username = body.username or (
             principal.user.username if principal.user else None
         )
+    elif principal.user is not None:
+        username = principal.user.default_account or principal.user.username
     else:
-        username = principal.user.username if principal.user else None
+        username = None
     if not username:
         raise HTTPException(status_code=400, detail="username is required")
     if not remote.valid_username(username):

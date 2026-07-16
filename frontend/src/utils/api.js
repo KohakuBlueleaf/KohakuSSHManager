@@ -69,6 +69,10 @@ export const authAPI = {
     const { data } = await api.get("/auth/me")
     return data
   },
+  async updateProfile(body) {
+    const { data } = await api.patch("/auth/profile", body)
+    return data
+  },
   async changePassword(body) {
     const { data } = await api.post("/auth/password", body)
     return data

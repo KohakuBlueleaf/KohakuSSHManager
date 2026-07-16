@@ -162,10 +162,14 @@ app = create_app()
 
 
 def main() -> None:
+    # log_config=None keeps uvicorn from installing its own handlers, so its
+    # logs flow through our loguru interception (see logger._intercept_stdlib).
     uvicorn.run(
         "kohakusshmanager.app:app",
         host=cfg.app.host,
         port=cfg.app.port,
+        log_config=None,
+        access_log=cfg.app.access_log,
     )
 
 
