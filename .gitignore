@@ -1,0 +1,40 @@
+plans/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# Database / secrets
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+secret.key
+*.pem
+id_ed25519*
+id_rsa*
+.env
+.env.*
+!.env.example
+config.local.*
+
+# Frontend
+node_modules/
+frontend/dist/
+src/kohakusshmanager-frontend/dist/
+src/kohakusshmanager-frontend/node_modules/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
