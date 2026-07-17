@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from kohakusshmanager import crypto, remote, runner, ssh
-from kohakusshmanager.db import db, utcnow
+from kohakusshmanager.db import db_write, utcnow
 from kohakusshmanager.errors import NotFoundError
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import (
@@ -49,8 +49,10 @@ def generate_management_key() -> ManagementKey:
     )
     public_line = public_bytes.decode("ascii") + " kohakusshmanager"
     nonce, ciphertext = crypto.encrypt(private_bytes)
-    return ManagementKey.create(
-        public_key=public_line, ciphertext=ciphertext, nonce=nonce, active=True
+    return db_write(
+        lambda: ManagementKey.create(
+            public_key=public_line, ciphertext=ciphertext, nonce=nonce, active=True
+        )
     )
 
 
@@ -103,26 +105,31 @@ def new_action(
     input_summary: str = "",
     state: str = "pending",
 ) -> RemoteAction:
-    return RemoteAction.create(
-        action=action_type,
-        actor=actor,
-        machine=machine,
-        account=account,
-        key=key,
-        request=request,
-        mount=mount,
-        input_summary=input_summary[:500],
-        state=state,
-        started_at=utcnow() if state == "running" else None,
+    return db_write(
+        lambda: RemoteAction.create(
+            action=action_type,
+            actor=actor,
+            machine=machine,
+            account=account,
+            key=key,
+            request=request,
+            mount=mount,
+            input_summary=input_summary[:500],
+            state=state,
+            started_at=utcnow() if state == "running" else None,
+        )
     )
 
 
 def complete_action(action: RemoteAction, result=None, error: str | None = None):
-    action.state = "failed" if error else "succeeded"
-    action.result = runner.bounded_result(result)
-    action.error = error
-    action.finished_at = utcnow()
-    action.save()
+    def _apply():
+        action.state = "failed" if error else "succeeded"
+        action.result = runner.bounded_result(result)
+        action.error = error
+        action.finished_at = utcnow()
+        action.save()
+
+    db_write(_apply)
 
 
 def dispatch(
@@ -138,17 +145,17 @@ def dispatch(
     input_summary: str = "",
     is_scan: bool = False,
 ) -> RemoteAction:
-    with db.atomic():
-        action = new_action(
-            action_type,
-            actor,
-            machine=machine,
-            account=account,
-            key=key,
-            request=request,
-            mount=mount,
-            input_summary=input_summary,
-        )
+    # new_action already writes on the DB thread; no outer transaction here.
+    action = new_action(
+        action_type,
+        actor,
+        machine=machine,
+        account=account,
+        key=key,
+        request=request,
+        mount=mount,
+        input_summary=input_summary,
+    )
     runner.submit_action(
         action.id, fn, machine_id=machine.id if machine else None, is_scan=is_scan
     )

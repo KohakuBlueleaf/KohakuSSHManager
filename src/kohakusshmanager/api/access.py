@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from kohakusshmanager import audit, permissions, remote, services, webhook
 from kohakusshmanager.auth import Principal, require_user
-from kohakusshmanager.db import to_iso_z
+from kohakusshmanager.db import db_write, to_iso_z
 from kohakusshmanager.models import AccessRequest, Machine, SSHKey
 
 router = APIRouter(prefix="/access", tags=["access"])
@@ -81,13 +81,15 @@ def create_request(
     if decision == "reject":
         raise HTTPException(status_code=403, detail=reason)
 
-    req = AccessRequest.create(
-        user=principal.user,
-        machine=machine,
-        username=username,
-        requested_by=principal.name,
-        reason=reason,
-        state="pending",
+    req = db_write(
+        lambda: AccessRequest.create(
+            user=principal.user,
+            machine=machine,
+            username=username,
+            requested_by=principal.name,
+            reason=reason,
+            state="pending",
+        )
     )
 
     if decision == "auto":
@@ -161,7 +163,7 @@ def reject(
     req.reason = body.reason or req.reason
     req.decided_by = principal.name
     req.decided_at = services.utcnow()
-    req.save()
+    db_write(req.save)
     audit.record(
         principal.name, "request_rejected", target=req.machine.name, detail=body.reason
     )

@@ -13,7 +13,7 @@ from typing import Callable
 from kohakusshmanager import ssh, webhook
 from kohakusshmanager.config import cfg
 from kohakusshmanager.crypto import redact
-from kohakusshmanager.db import db, utcnow
+from kohakusshmanager.db import db_write, utcnow
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import RemoteAction
 
@@ -60,20 +60,24 @@ bounded_result = _bounded_result
 
 
 def _finish(action_id: int, state: str, result=None, error: str | None = None) -> None:
-    with db.atomic():
-        RemoteAction.update(
+    db_write(
+        lambda: RemoteAction.update(
             state=state,
             result=_bounded_result(result),
             error=redact(error) if error else None,
             finished_at=utcnow(),
-        ).where(RemoteAction.id == action_id).execute()
+        )
+        .where(RemoteAction.id == action_id)
+        .execute()
+    )
 
 
 def _run(action_id: int, fn: Callable[[], dict], machine_id, is_scan: bool) -> None:
-    with db.atomic():
-        RemoteAction.update(state="running", started_at=utcnow()).where(
-            RemoteAction.id == action_id
-        ).execute()
+    db_write(
+        lambda: RemoteAction.update(state="running", started_at=utcnow())
+        .where(RemoteAction.id == action_id)
+        .execute()
+    )
 
     lock = ssh.machine_lock(machine_id) if machine_id else None
     try:
@@ -124,8 +128,8 @@ def submit_action(
 
 def mark_interrupted_actions() -> int:
     """Mark leftover pending/running actions interrupted (called on startup)."""
-    count = (
-        RemoteAction.update(state="interrupted", finished_at=utcnow())
+    count = db_write(
+        lambda: RemoteAction.update(state="interrupted", finished_at=utcnow())
         .where(RemoteAction.state.in_(["pending", "running"]))
         .execute()
     )

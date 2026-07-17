@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from kohakusshmanager import audit
 from kohakusshmanager.auth import Principal, require_admin
+from kohakusshmanager.db import db_write
 from kohakusshmanager.models import (
     Group,
     GroupMachine,
@@ -66,7 +67,7 @@ def create_group(body: GroupCreate, principal: Principal = Depends(require_admin
         raise HTTPException(status_code=400, detail="group name required")
     if Group.get_or_none(Group.name == body.name) is not None:
         raise HTTPException(status_code=409, detail="group name already exists")
-    group = Group.create(name=body.name, description=body.description)
+    group = db_write(lambda: Group.create(name=body.name, description=body.description))
     audit.record(principal.name, "group_created", target=group.name)
     return serialize_group(group)
 
@@ -82,7 +83,7 @@ def update_group(
         group.name = body.name
     if body.description is not None:
         group.description = body.description
-    group.save()
+    db_write(group.save)
     return serialize_group(group)
 
 
@@ -90,7 +91,7 @@ def update_group(
 def delete_group(group_id: int, principal: Principal = Depends(require_admin)):
     group = _get_group(group_id)
     name = group.name
-    group.delete_instance(recursive=True)
+    db_write(lambda: group.delete_instance(recursive=True))
     audit.record(principal.name, "group_deleted", target=name)
 
 
@@ -102,7 +103,7 @@ def add_member(
     user = User.get_or_none(User.id == user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
-    GroupMember.get_or_create(group=group, user=user)
+    db_write(lambda: GroupMember.get_or_create(group=group, user=user))
     return serialize_group(group)
 
 
@@ -111,9 +112,11 @@ def remove_member(
     group_id: int, user_id: int, principal: Principal = Depends(require_admin)
 ):
     group = _get_group(group_id)
-    GroupMember.delete().where(
-        (GroupMember.group == group) & (GroupMember.user == user_id)
-    ).execute()
+    db_write(
+        lambda: GroupMember.delete()
+        .where((GroupMember.group == group) & (GroupMember.user == user_id))
+        .execute()
+    )
 
 
 @router.post("/{group_id}/machines/{machine_id}", status_code=201)
@@ -124,7 +127,7 @@ def add_machine(
     machine = Machine.get_or_none(Machine.id == machine_id)
     if machine is None:
         raise HTTPException(status_code=404, detail="machine not found")
-    GroupMachine.get_or_create(group=group, machine=machine)
+    db_write(lambda: GroupMachine.get_or_create(group=group, machine=machine))
     return serialize_group(group)
 
 
@@ -133,6 +136,8 @@ def remove_machine(
     group_id: int, machine_id: int, principal: Principal = Depends(require_admin)
 ):
     group = _get_group(group_id)
-    GroupMachine.delete().where(
-        (GroupMachine.group == group) & (GroupMachine.machine == machine_id)
-    ).execute()
+    db_write(
+        lambda: GroupMachine.delete()
+        .where((GroupMachine.group == group) & (GroupMachine.machine == machine_id))
+        .execute()
+    )

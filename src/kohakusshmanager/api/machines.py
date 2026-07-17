@@ -13,7 +13,7 @@ from kohakusshmanager import audit, permissions, services
 from kohakusshmanager.auth import Principal, require_admin, require_user
 from kohakusshmanager.config import cfg
 from kohakusshmanager.crypto import SecretUnavailable
-from kohakusshmanager.db import to_iso_z
+from kohakusshmanager.db import db_write, to_iso_z
 from kohakusshmanager.models import (
     AccountKey,
     LocalAccount,
@@ -205,13 +205,15 @@ def list_machines(principal: Principal = Depends(require_user)):
 def create_machine(body: MachineCreate, principal: Principal = Depends(require_admin)):
     if Machine.get_or_none(Machine.name == body.name) is not None:
         raise HTTPException(status_code=409, detail="machine name already exists")
-    machine = Machine.create(
-        name=body.name,
-        address=body.address,
-        port=body.port,
-        management_user=body.management_user,
-        tags=body.tags,
-        notes=body.notes,
+    machine = db_write(
+        lambda: Machine.create(
+            name=body.name,
+            address=body.address,
+            port=body.port,
+            management_user=body.management_user,
+            tags=body.tags,
+            notes=body.notes,
+        )
     )
     audit.record(principal.name, "machine_created", target=machine.name)
     return serialize_machine_summary(machine)
@@ -269,7 +271,7 @@ def update_machine(
         machine.port = body.port
     if body.tags is not None:
         machine.tags = body.tags
-    machine.save()
+    db_write(machine.save)
     audit.record(principal.name, "machine_updated", target=machine.name)
     return serialize_machine_summary(machine)
 
@@ -289,7 +291,7 @@ def delete_machine(machine_id: int, principal: Principal = Depends(require_admin
             status_code=409, detail="disable this machine's storage mounts first"
         )
     name = machine.name
-    machine.delete_instance(recursive=True)
+    db_write(lambda: machine.delete_instance(recursive=True))
     audit.record(principal.name, "machine_deleted", target=name)
 
 
@@ -348,7 +350,7 @@ def adopt_account(
         raise HTTPException(status_code=404, detail="user not found")
     account.user = user
     account.state = "adopted"
-    account.save()
+    db_write(account.save)
     audit.record(
         principal.name, "account_adopted", target=account.username, detail=user.username
     )
@@ -360,7 +362,7 @@ def unlink_account(account_id: int, principal: Principal = Depends(require_admin
     account = _get_account(account_id)
     account.user = None
     account.state = "unmanaged"
-    account.save()
+    db_write(account.save)
     audit.record(principal.name, "account_unlinked", target=account.username)
     return serialize_account(account)
 

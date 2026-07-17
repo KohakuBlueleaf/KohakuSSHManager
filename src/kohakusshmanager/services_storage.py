@@ -1,7 +1,7 @@
 """Storage mount scanning: replace usage records atomically on success."""
 
 from kohakusshmanager import remote_storage, webhook
-from kohakusshmanager.db import db
+from kohakusshmanager.db import db_write
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import RemoteAction, StorageMount, UsageRecord
 from kohakusshmanager.services_base import dispatch, with_connection
@@ -10,7 +10,7 @@ logger = get_logger("SERVICES")
 
 
 def _persist_usage(mount: StorageMount, data: dict) -> dict:
-    with db.atomic():
+    def _write():
         UsageRecord.delete().where(UsageRecord.mount == mount).execute()
         total = data["total"]
         UsageRecord.create(
@@ -34,6 +34,8 @@ def _persist_usage(mount: StorageMount, data: dict) -> dict:
                 bytes=directory["bytes"] or 0,
                 status="ok",
             )
+
+    db_write(_write)
     return {
         "mount": mount.name,
         "owners": len(data["by_owner"]),
@@ -54,11 +56,15 @@ def scan_mount(mount: StorageMount, actor: str) -> RemoteAction:
         try:
             data = with_connection(machine, work)
         except Exception as exc:
-            with db.atomic():
+            err = str(exc)
+
+            def _mark_failed():
                 UsageRecord.delete().where(UsageRecord.mount == m).execute()
                 UsageRecord.create(
-                    mount=m, scope="total", status="failed", error=str(exc), bytes=0
+                    mount=m, scope="total", status="failed", error=err, bytes=0
                 )
+
+            db_write(_mark_failed)
             webhook.send(
                 "scan.failed",
                 f"Scan of mount '{m.name}' on '{machine.name}' failed: {exc}",

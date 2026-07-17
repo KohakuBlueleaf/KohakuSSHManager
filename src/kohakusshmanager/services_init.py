@@ -1,7 +1,7 @@
 """Existing-machine initialization: preview and apply (key-file archival)."""
 
 from kohakusshmanager import remote, ssh, webhook
-from kohakusshmanager.db import db
+from kohakusshmanager.db import db_write
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import AccountKey, LocalAccount, Machine, SSHKey
 from kohakusshmanager.services_base import (
@@ -129,7 +129,7 @@ def initialize_machine_apply(
         with ssh.machine_lock(machine.id):
             per = with_connection(machine, work)
 
-        with db.atomic():
+        def _persist():
             for item in per:
                 if item.get("skipped") or item.get("error"):
                     results.append(item)
@@ -162,6 +162,7 @@ def initialize_machine_apply(
                     }
                 )
 
+        db_write(_persist)
         complete_action(action, {"results": results})
         return {"machine": machine.name, "results": results, "action_id": action.id}
     except Exception as exc:

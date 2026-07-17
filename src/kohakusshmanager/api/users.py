@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from kohakusshmanager import audit, services
 from kohakusshmanager.auth import Principal, hash_password, require_admin
-from kohakusshmanager.db import to_iso_z
+from kohakusshmanager.db import db_write, to_iso_z
 from kohakusshmanager.models import AccessRequest, SSHKey, User
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -66,11 +66,13 @@ def create_user(body: UserCreate, principal: Principal = Depends(require_admin))
         raise HTTPException(status_code=400, detail="password must not be empty")
     if User.get_or_none(User.username == username) is not None:
         raise HTTPException(status_code=409, detail="username already exists")
-    user = User.create(
-        username=username,
-        display_name=body.display_name or username,
-        password_hash=hash_password(body.password),
-        role=body.role,
+    user = db_write(
+        lambda: User.create(
+            username=username,
+            display_name=body.display_name or username,
+            password_hash=hash_password(body.password),
+            role=body.role,
+        )
     )
     audit.record(principal.name, "user_created", target=username)
     return serialize_user(user)
@@ -93,7 +95,7 @@ def update_user(
         user.enabled = body.enabled
     if body.password:
         user.password_hash = hash_password(body.password)
-    user.save()
+    db_write(user.save)
     audit.record(principal.name, "user_updated", target=user.username)
     return serialize_user(user)
 

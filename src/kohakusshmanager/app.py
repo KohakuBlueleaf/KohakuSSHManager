@@ -14,7 +14,7 @@ from kohakusshmanager.api import api_router
 from kohakusshmanager.audit import cleanup_audit
 from kohakusshmanager.auth import init_admin_token
 from kohakusshmanager.config import cfg, ensure_secrets, validate_production_safety
-from kohakusshmanager.db import init_db, run_migrations
+from kohakusshmanager.db import db_shutdown, init_db, run_migrations
 from kohakusshmanager.errors import add_exception_handlers
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import Machine
@@ -107,6 +107,7 @@ async def lifespan(app: FastAPI):
             except (asyncio.CancelledError, Exception):
                 pass
         runner_shutdown()
+        db_shutdown()
 
 
 def _spa_dir() -> Path | None:

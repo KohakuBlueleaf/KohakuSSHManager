@@ -8,6 +8,7 @@ tracked in a ``schema_migrations`` table.
 
 import importlib
 import pkgutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,9 +18,43 @@ from kohakusshmanager.logger import get_logger
 
 logger = get_logger("DB")
 
-_PRAGMAS = {"journal_mode": "wal", "foreign_keys": 1, "busy_timeout": 5000}
+_PRAGMAS = {"journal_mode": "wal", "foreign_keys": 1, "busy_timeout": 10000}
 
 db = SqliteDatabase(None)
+
+# SQLite permits only one writer at a time. The action runner writes from a
+# bounded thread pool and the background health timer writes from the event
+# loop, so concurrent transactions would otherwise raise "database is locked".
+# Instead of locking, every write runs on a single dedicated DB thread (one
+# connection), which serializes writers by construction. Reads stay concurrent
+# on their own thread-local connections under WAL.
+#
+# IMPORTANT: never call ``db_write`` from inside another ``db_write`` callable.
+# The pool has a single worker, so a nested call would wait on itself forever.
+# Wrap only top-level transactions; helpers they call must use raw DB ops.
+_db_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ksm-db")
+
+
+def db_write(fn, *args, **kwargs):
+    """Run ``fn`` inside a transaction on the dedicated DB thread and return it."""
+
+    def _tx():
+        with db.atomic():
+            return fn(*args, **kwargs)
+
+    return _db_pool.submit(_tx).result()
+
+
+def db_shutdown() -> None:
+    _db_pool.shutdown(wait=False)
+
+
+def reset_db_pool() -> None:
+    """Recreate the DB thread. Used by tests that rebind the database file so
+    the pool thread opens a fresh connection to the new path."""
+    global _db_pool
+    _db_pool.shutdown(wait=False)
+    _db_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ksm-db")
 
 
 def utcnow() -> datetime:

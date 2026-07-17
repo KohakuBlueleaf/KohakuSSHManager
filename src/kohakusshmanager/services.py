@@ -9,7 +9,7 @@ re-exported here so callers use a single ``services.X`` surface.
 """
 
 from kohakusshmanager import remote, ssh, webhook
-from kohakusshmanager.db import db, utcnow
+from kohakusshmanager.db import db_write, utcnow
 from kohakusshmanager.errors import ConflictError
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import (
@@ -89,14 +89,16 @@ def _refresh_machine_work(machine_id: int) -> dict:
     try:
         facts, accounts, keys_by_user = with_connection(machine, work)
     except ssh.SSHError as exc:
-        with db.atomic():
-            machine = Machine.get_by_id(machine_id)
-            machine.status = (
-                "offline" if isinstance(exc, (SSHUnreachable, SSHTimeout)) else "error"
-            )
-            machine.last_error = str(exc)
-            machine.last_check_at = utcnow()
-            machine.save()
+        status = "offline" if isinstance(exc, (SSHUnreachable, SSHTimeout)) else "error"
+
+        def _fail():
+            m = Machine.get_by_id(machine_id)
+            m.status = status
+            m.last_error = str(exc)
+            m.last_check_at = utcnow()
+            m.save()
+
+        db_write(_fail)
         if isinstance(exc, (SSHUnreachable, SSHTimeout)):
             webhook.send(
                 "machine.unreachable",
@@ -105,7 +107,7 @@ def _refresh_machine_work(machine_id: int) -> dict:
             )
         raise
 
-    with db.atomic():
+    def _persist():
         machine = Machine.get_by_id(machine_id)
         machine.facts = facts
         machine.status = "online"
@@ -138,6 +140,7 @@ def _refresh_machine_work(machine_id: int) -> dict:
                 account.present = False
                 account.save()
 
+    db_write(_persist)
     return {"status": "online", "accounts": len(accounts)}
 
 
@@ -176,7 +179,7 @@ def enroll_confirm(machine_id: int, fingerprint: str, actor: str) -> dict:
             )
         machine.host_key_fingerprint = fingerprint
         machine.enrolled = True
-        machine.save()
+        db_write(machine.save)
 
         def work(client):
             code, _, err = ssh.run(client, "true", sudo=True)
@@ -199,7 +202,8 @@ def enroll_confirm(machine_id: int, fingerprint: str, actor: str) -> dict:
 def delete_panel_user(user: User) -> None:
     """Delete a panel user only. Keys -> no_owner, requests -> revoked,
     linked local accounts -> unmanaged/unlinked. No remote actions."""
-    with db.atomic():
+
+    def _delete():
         SSHKey.update(user=None, state="no_owner").where(SSHKey.user == user).execute()
         AccessRequest.update(state="revoked").where(
             (AccessRequest.user == user)
@@ -209,6 +213,8 @@ def delete_panel_user(user: User) -> None:
             LocalAccount.user == user
         ).execute()
         user.delete_instance()
+
+    db_write(_delete)
 
 
 # --- Retry dispatch --------------------------------------------------------

@@ -7,7 +7,7 @@ import bcrypt
 from fastapi import HTTPException, Request, Response
 
 from kohakusshmanager.config import cfg
-from kohakusshmanager.db import utcnow
+from kohakusshmanager.db import db_write, utcnow
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import Session, User
 
@@ -61,8 +61,10 @@ def verify_admin_token(token: str) -> bool:
 def create_session(user: User | None, is_admin: bool) -> Session:
     token = secrets.token_urlsafe(32)  # 43-char urlsafe token
     expires_at = utcnow() + timedelta(hours=cfg.auth.session_ttl_hours)
-    return Session.create(
-        token=token, user=user, is_admin=is_admin, expires_at=expires_at
+    return db_write(
+        lambda: Session.create(
+            token=token, user=user, is_admin=is_admin, expires_at=expires_at
+        )
     )
 
 
@@ -115,7 +117,7 @@ def get_principal(request: Request) -> Principal | None:
     if session is None:
         return None
     if session.expires_at <= utcnow():
-        session.delete_instance()
+        db_write(session.delete_instance)
         return None
     if session.is_admin:
         return Principal(user=None, is_admin=True)

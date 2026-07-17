@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from kohakusshmanager import audit, services
 from kohakusshmanager.auth import Principal, require_user
-from kohakusshmanager.db import to_iso_z
+from kohakusshmanager.db import db_write, to_iso_z
 from kohakusshmanager.errors import ValidationError
 from kohakusshmanager.models import AccountKey, SSHKey, User
 from kohakusshmanager.sshkeys import parse_ssh_public_key
@@ -75,12 +75,14 @@ def add_key(body: KeyCreate, principal: Principal = Depends(require_user)):
         owner = principal.user
         state = "active"
 
-    key = SSHKey.create(
-        user=owner,
-        public_key=parsed.normalized,
-        fingerprint=parsed.fingerprint,
-        comment=body.comment or parsed.comment,
-        state=state,
+    key = db_write(
+        lambda: SSHKey.create(
+            user=owner,
+            public_key=parsed.normalized,
+            fingerprint=parsed.fingerprint,
+            comment=body.comment or parsed.comment,
+            state=state,
+        )
     )
     audit.record(principal.name, "key_added", target=parsed.fingerprint)
 
@@ -120,7 +122,7 @@ def assign_key(
         raise HTTPException(status_code=404, detail="user not found")
     key.user = user
     key.state = "active"
-    key.save()
+    db_write(key.save)
     audit.record(
         principal.name, "key_assigned", target=key.fingerprint, detail=user.username
     )
@@ -147,5 +149,5 @@ def delete_key(key_id: int, principal: Principal = Depends(require_user)):
         raise HTTPException(
             status_code=409, detail="key is still observed on a machine; revoke first"
         )
-    key.delete_instance(recursive=True)
+    db_write(lambda: key.delete_instance(recursive=True))
     audit.record(principal.name, "key_deleted", target=key.fingerprint)

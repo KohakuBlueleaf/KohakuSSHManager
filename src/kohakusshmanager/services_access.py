@@ -1,7 +1,7 @@
 """Access approval/revocation, per-key install/remove, groups, account delete."""
 
 from kohakusshmanager import remote, webhook
-from kohakusshmanager.db import db, utcnow
+from kohakusshmanager.db import db_write, utcnow
 from kohakusshmanager.errors import ConflictError
 from kohakusshmanager.logger import get_logger
 from kohakusshmanager.models import (
@@ -61,14 +61,18 @@ def _approve_work(request_id: int) -> dict:
     try:
         acc_info, installs, observed = with_connection(machine, work)
     except Exception as exc:
-        with db.atomic():
-            req = AccessRequest.get_by_id(request_id)
-            req.state = "failed"
-            req.last_error = str(exc)
-            req.save()
+        err = str(exc)
+
+        def _fail():
+            r = AccessRequest.get_by_id(request_id)
+            r.state = "failed"
+            r.last_error = err
+            r.save()
+
+        db_write(_fail)
         raise
 
-    with db.atomic():
+    def _persist():
         req = AccessRequest.get_by_id(request_id)
         account = upsert_account_link(machine, username, user, acc_info)
         for key_id, _res in installs:
@@ -80,6 +84,8 @@ def _approve_work(request_id: int) -> dict:
         req.state = "active"
         req.last_error = None
         req.save()
+
+    db_write(_persist)
 
     webhook.send(
         "access_request.approved",
@@ -95,11 +101,13 @@ def _approve_work(request_id: int) -> dict:
 
 
 def approve_request(req: AccessRequest, actor: str) -> list[RemoteAction]:
-    with db.atomic():
+    def _approve():
         req.state = "approved"
         req.decided_by = actor
         req.decided_at = utcnow()
         req.save()
+
+    db_write(_approve)
     action = dispatch(
         "install_key",
         actor,
@@ -132,7 +140,7 @@ def _revoke_work(request_id: int) -> dict:
 
     observed = with_connection(machine, work)
 
-    with db.atomic():
+    def _persist():
         req = AccessRequest.get_by_id(request_id)
         acct = LocalAccount.get_by_id(account.id)
         apply_account_keys(acct, observed)
@@ -146,6 +154,8 @@ def _revoke_work(request_id: int) -> dict:
         req.state = "revoked"
         req.decided_at = utcnow()
         req.save()
+
+    db_write(_persist)
 
     webhook.send(
         "access_request.revoked",
@@ -162,11 +172,14 @@ def _revoke_work(request_id: int) -> dict:
 
 def revoke_request(req: AccessRequest, actor: str) -> list[RemoteAction]:
     if req.account is None:
-        with db.atomic():
+
+        def _revoke():
             req.state = "revoked"
             req.decided_by = actor
             req.decided_at = utcnow()
             req.save()
+
+        db_write(_revoke)
         return []
     action = dispatch(
         "remove_key",
@@ -199,9 +212,12 @@ def install_key_action(
             return res, observed
 
         res, observed = with_connection(machine, work)
-        with db.atomic():
+
+        def _persist():
             link_managed_key(acct, key)
             apply_account_keys(acct, observed)
+
+        db_write(_persist)
         return {
             "machine": machine.name,
             "username": acct.username,
@@ -236,7 +252,8 @@ def remove_key_action(
             return res, observed
 
         res, observed = with_connection(machine, work)
-        with db.atomic():
+
+        def _persist():
             ak = AccountKey.get_or_none(
                 (AccountKey.account == acct) & (AccountKey.key == key)
             )
@@ -244,6 +261,8 @@ def remove_key_action(
                 ak.managed = False
                 ak.save()
             apply_account_keys(acct, observed)
+
+        db_write(_persist)
         return {
             "machine": machine.name,
             "username": acct.username,
@@ -277,9 +296,11 @@ def install_user_key_everywhere(
 
 
 def revoke_user_key(sshkey: SSHKey, actor: str) -> list[RemoteAction]:
-    with db.atomic():
+    def _revoke():
         sshkey.state = "revoked"
         sshkey.save()
+
+    db_write(_revoke)
     actions: list[RemoteAction] = []
     # Remove from every managed link, not only currently-observed ones: a key
     # on a machine that was offline at the last refresh must still be scheduled
@@ -318,10 +339,13 @@ def set_account_groups(
             return res, groups
 
         res, groups = with_connection(account.machine, work)
-        with db.atomic():
-            acct = LocalAccount.get_by_id(acc_id)
-            acct.groups = groups
-            acct.save()
+
+        def _persist():
+            a = LocalAccount.get_by_id(acc_id)
+            a.groups = groups
+            a.save()
+
+        db_write(_persist)
         return res
 
     return dispatch(
@@ -347,11 +371,14 @@ def delete_local_account(
             return remote.delete_account(client, acct.username, delete_home=delete_home)
 
         res = with_connection(account.machine, work)
-        with db.atomic():
-            acct = LocalAccount.get_by_id(acc_id)
-            acct.present = False
-            acct.state = "unmanaged"
-            acct.save()
+
+        def _persist():
+            a = LocalAccount.get_by_id(acc_id)
+            a.present = False
+            a.state = "unmanaged"
+            a.save()
+
+        db_write(_persist)
         return res
 
     return dispatch(

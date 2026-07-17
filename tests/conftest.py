@@ -21,7 +21,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from kohakusshmanager import runner, ssh  # noqa: E402
 from kohakusshmanager.app import create_app  # noqa: E402
-from kohakusshmanager.db import db, init_db, run_migrations  # noqa: E402
+from kohakusshmanager.db import (  # noqa: E402
+    db,
+    init_db,
+    reset_db_pool,
+    run_migrations,
+)
 
 # --- Fake machine ----------------------------------------------------------
 
@@ -265,6 +270,9 @@ class FakeRegistry:
 def dbfile(tmp_path):
     path = str(tmp_path / "ksm.db")
     init_db(path, force=True)
+    # Fresh single-thread DB pool bound to this test's file (the pool thread
+    # holds its own connection, so it must be recreated when the path changes).
+    reset_db_pool()
     run_migrations(db)
     yield path
     if not db.is_closed():

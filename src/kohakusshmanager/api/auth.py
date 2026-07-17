@@ -16,6 +16,7 @@ from kohakusshmanager.auth import (
     verify_admin_token,
     verify_password,
 )
+from kohakusshmanager.db import db_write
 from kohakusshmanager.models import Session, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -84,7 +85,7 @@ def logout(request: Request, response: Response):
     if token:
         session = Session.get_or_none(Session.token == token)
         if session is not None:
-            session.delete_instance()
+            db_write(session.delete_instance)
     clear_session_cookie(response)
     return Response(status_code=204)
 
@@ -126,7 +127,7 @@ def update_profile(body: ProfileRequest, principal: Principal = Depends(require_
             )
         user.default_account = acct
 
-    user.save()
+    db_write(user.save)
     audit.record(user.username, "profile_updated")
     return principal_dict(principal)
 
@@ -145,6 +146,6 @@ def change_password(
     if not body.new_password:
         raise HTTPException(status_code=400, detail="new password must not be empty")
     user.password_hash = hash_password(body.new_password)
-    user.save()
+    db_write(user.save)
     audit.record(user.username, "password_changed")
     return {"success": True}

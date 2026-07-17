@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from kohakusshmanager import audit, remote, services
 from kohakusshmanager.auth import Principal, require_admin, require_user
-from kohakusshmanager.db import to_iso_z
+from kohakusshmanager.db import db_write, to_iso_z
 from kohakusshmanager.models import (
     LocalAccount,
     Machine,
@@ -98,14 +98,16 @@ def create_mount(body: MountCreate, principal: Principal = Depends(require_admin
             raise HTTPException(
                 status_code=400, detail=f"invalid subdir path: {subdir}"
             )
-    mount = StorageMount.create(
-        name=body.name,
-        machine=machine,
-        path=body.path,
-        subdirs=body.subdirs,
-        preferred=body.preferred,
-        notes=body.notes,
-        enabled=body.enabled,
+    mount = db_write(
+        lambda: StorageMount.create(
+            name=body.name,
+            machine=machine,
+            path=body.path,
+            subdirs=body.subdirs,
+            preferred=body.preferred,
+            notes=body.notes,
+            enabled=body.enabled,
+        )
     )
     audit.record(principal.name, "mount_created", target=mount.name)
     return serialize_mount(mount)
@@ -133,7 +135,7 @@ def update_mount(
         mount.notes = body.notes
     if body.enabled is not None:
         mount.enabled = body.enabled
-    mount.save()
+    db_write(mount.save)
     return serialize_mount(mount)
 
 
@@ -141,7 +143,7 @@ def update_mount(
 def delete_mount(mount_id: int, principal: Principal = Depends(require_admin)):
     mount = _get_mount(mount_id)
     name = mount.name
-    mount.delete_instance(recursive=True)
+    db_write(lambda: mount.delete_instance(recursive=True))
     audit.record(principal.name, "mount_deleted", target=name)
 
 
