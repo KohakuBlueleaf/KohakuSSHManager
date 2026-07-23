@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from kohakusshmanager import __version__
+from kohakusshmanager import __version__, webhook
 from kohakusshmanager.api import api_router
 from kohakusshmanager.audit import cleanup_audit
 from kohakusshmanager.auth import init_admin_token
@@ -77,6 +77,24 @@ def _log_banner(secret_info: dict) -> None:
     logger.info("=" * 60)
 
 
+def _announce_startup() -> None:
+    """Best-effort webhook ping so admins can verify their wiring on boot.
+
+    Sent only when a webhook URL is configured; otherwise it is a silent no-op.
+    """
+    if not cfg.webhook.url:
+        return
+    webhook.send(
+        "app.startup",
+        f"KohakuSSHManager {__version__} started on {cfg.app.host}:{cfg.app.port}",
+        {
+            "version": __version__,
+            "host": cfg.app.host,
+            "port": cfg.app.port,
+        },
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -90,6 +108,7 @@ async def lifespan(app: FastAPI):
         logger.warning(warning)
     mark_interrupted_actions()
     cleanup_audit()
+    _announce_startup()
 
     tasks: list[asyncio.Task] = []
     if cfg.health.interval > 0:

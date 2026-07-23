@@ -59,3 +59,14 @@ export function humanCount(n) {
   const v = Number(n)
   return Number.isFinite(v) ? v.toLocaleString() : "—"
 }
+
+/**
+ * Display label for an AccessRequest state. The stored state names are
+ * lifecycle-accurate but ambiguous on screen ("active" reads as "still
+ * open"), so requests get their own wording. Returns undefined for states
+ * whose raw name is already clear (failed, rejected, revoked, …) so the
+ * badge falls back to the state string.
+ */
+export function requestStateLabel(state) {
+  return { pending: "awaiting approval", approved: "installing", active: "granted" }[state]
+}

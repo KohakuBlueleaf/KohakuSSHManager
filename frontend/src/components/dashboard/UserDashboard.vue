@@ -9,7 +9,7 @@
     <SectionCard title="My machine access" icon="i-carbon-connect">
       <LoadingBlock v-if="loading.access" />
       <template v-else>
-        <AccessMatrix v-if="access.length" :rows="access" @revoke="revokeAccess" />
+        <AccessMatrix v-if="currentAccess.length" :rows="currentAccess" @revoke="revokeAccess" />
         <EmptyState v-else icon="i-carbon-connect" text="No access yet" hint="Request access to a machine below." />
       </template>
     </SectionCard>
@@ -21,11 +21,11 @@
       </SectionCard>
 
       <!-- My requests -->
-      <SectionCard title="My requests" icon="i-carbon-task">
+      <SectionCard title="My requests" icon="i-carbon-task" subtitle="Granted access moves up to the access list.">
         <LoadingBlock v-if="loading.requests" />
         <template v-else>
-          <RequestTable v-if="requests.length" :rows="requests" @revoke="revokeAccess" />
-          <EmptyState v-else icon="i-carbon-task" text="No requests" />
+          <RequestTable v-if="openRequests.length" :rows="openRequests" @revoke="revokeAccess" />
+          <EmptyState v-else icon="i-carbon-task" text="No open requests" />
         </template>
       </SectionCard>
     </div>
@@ -109,6 +109,11 @@ const loading = reactive({ keys: true, access: true, requests: true, storage: tr
 // Prefer the user's configured default machine account, else their panel name.
 const defaultTarget = computed(() => auth.defaultAccount || auth.name)
 
+// Split the two dashboard sections cleanly: granted access lives in the
+// matrix; the requests table keeps only not-yet-granted lifecycle rows.
+const currentAccess = computed(() => access.value.filter((r) => r.state === "active"))
+const openRequests = computed(() => requests.value.filter((r) => r.state !== "active"))
+
 async function reloadKeys() {
   loading.keys = true
   try {
@@ -122,7 +127,8 @@ async function reloadAccess() {
   loading.access = true
   loading.requests = true
   try {
-    access.value = await accessAPI.overview()
+    // /access/overview returns {access: [...], keys: [...]}, not a bare array.
+    access.value = (await accessAPI.overview()).access ?? []
   } finally {
     loading.access = false
   }

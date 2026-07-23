@@ -19,7 +19,7 @@
           <td class="td-cell">
             <span class="mono-chip">{{ row.username || "—" }}</span>
           </td>
-          <td class="td-cell"><StatusBadge :state="row.state" /></td>
+          <td class="td-cell"><StatusBadge :state="row.state" :label="requestStateLabel(row.state)" /></td>
           <td class="td-cell max-w-xs">
             <span class="text-xs text-warm-500 dark:text-warm-400 break-words">
               {{ row.last_error || row.reason || "—" }}
@@ -46,7 +46,7 @@
 
 <script setup>
 import StatusBadge from "@/components/common/StatusBadge.vue"
-import { fromNow, fullTime } from "@/utils/format"
+import { fromNow, fullTime, requestStateLabel } from "@/utils/format"
 
 defineProps({
   rows: { type: Array, default: () => [] },

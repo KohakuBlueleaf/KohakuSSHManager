@@ -115,6 +115,54 @@ def _load_toml() -> dict:
         return {}
 
 
+def _parse_env_file(text: str) -> dict[str, str]:
+    """Parse ``KEY=VALUE`` lines from a .env body into a dict.
+
+    Blank lines and ``#`` comment lines are ignored, an optional leading
+    ``export`` is tolerated, the value is split on the first ``=``, surrounding
+    whitespace is stripped, and one pair of matching single or double quotes
+    around the value is removed. Malformed lines (no ``=`` or empty key) are
+    skipped silently.
+    """
+    result: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        result[key] = value
+    return result
+
+
+def _load_dotenv() -> None:
+    """Load a .env file into the environment before the config is read.
+
+    Real environment variables always win (``os.environ.setdefault``). The path
+    defaults to ``.env`` in the working directory; ``KSM_ENV_FILE`` overrides it.
+    A missing or unreadable file is a no-op.
+    """
+    path = os.environ.get("KSM_ENV_FILE", ".env")
+    p = Path(path)
+    if not p.is_file():
+        return
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for key, value in _parse_env_file(text).items():
+        os.environ.setdefault(key, value)
+
+
 @lru_cache(maxsize=1)
 def load_config() -> Config:
     base = _load_toml()
@@ -237,4 +285,5 @@ def validate_production_safety() -> list[str]:
     return warnings
 
 
+_load_dotenv()
 cfg = load_config()

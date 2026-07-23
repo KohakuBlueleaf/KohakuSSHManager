@@ -11,6 +11,7 @@ from kohakusshmanager.logger import get_logger
 logger = get_logger("WEBHOOK")
 
 EVENTS = {
+    "app.startup",
     "access_request.pending",
     "access_request.approved",
     "access_request.revoked",

@@ -64,7 +64,7 @@
                         <div v-for="m in machines" :key="m.id" class="flex items-center justify-between gap-2 rounded-lg border border-warm-200/60 dark:border-warm-700/60 px-3 py-1.5">
                           <span class="text-sm font-medium truncate">{{ m.name }}</span>
                           <span class="flex items-center gap-1.5 shrink-0">
-                            <StatusBadge v-if="requestFor(u, m)" :state="requestFor(u, m).state" />
+                            <StatusBadge v-if="requestFor(u, m)" :state="requestFor(u, m).state" :label="requestStateLabel(requestFor(u, m).state)" />
                             <KButton v-if="!hasAccess(u, m)" variant="secondary" :loading="accessBusy === busyKey(u, m)" :disabled="accessBusy !== null" @click="grantAccess(u, m)">Grant</KButton>
                             <KButton v-else-if="requestFor(u, m).state === 'active'" variant="danger" :loading="accessBusy === busyKey(u, m)" :disabled="accessBusy !== null" @click="revokeAccess(u, m)">Revoke</KButton>
                           </span>
@@ -155,6 +155,7 @@ import AddKeyForm from "@/components/keys/AddKeyForm.vue"
 import KeyList from "@/components/keys/KeyList.vue"
 import { useActionPoll } from "@/composables/useActionPoll"
 import { usersAPI, keysAPI, machinesAPI, accessAPI } from "@/utils/api"
+import { requestStateLabel } from "@/utils/format"
 
 const roleOptions = [
   { value: "member", label: "member" },
