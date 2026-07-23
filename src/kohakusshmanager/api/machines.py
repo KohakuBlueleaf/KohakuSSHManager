@@ -121,6 +121,7 @@ def serialize_account(account: LocalAccount) -> dict:
                 "observed": ak.observed,
                 "managed": ak.managed,
                 "origin": ak.origin,
+                "user_id": key.user_id,
                 "owner_name": owner.username if owner else None,
             }
         )

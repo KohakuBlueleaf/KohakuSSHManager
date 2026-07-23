@@ -33,25 +33,47 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="u in users" :key="u.id" class="hover:bg-warm-50/60 dark:hover:bg-warm-800/30">
-                <td class="td-cell">
-                  <div class="font-medium">{{ u.display_name || u.username }}</div>
-                  <div class="text-[11px] text-warm-400 dark:text-warm-500 font-mono">{{ u.username }}</div>
-                </td>
-                <td class="td-cell">
-                  <span class="gem-badge" :class="u.role === 'leader' ? 'bg-sapphire-light text-sapphire-shadow dark:bg-sapphire-shadow/30 dark:text-sapphire-light' : 'bg-warm-200/70 text-warm-600 dark:bg-warm-700/50 dark:text-warm-300'">
-                    {{ u.role }}
-                  </span>
-                </td>
-                <td class="td-cell"><StatusBadge :state="u.enabled ? 'active' : 'revoked'" :label="u.enabled ? 'enabled' : 'disabled'" /></td>
-                <td class="td-cell text-right">{{ u.key_count ?? "—" }}</td>
-                <td class="td-cell text-right">{{ u.active_access_count ?? "—" }}</td>
-                <td class="td-cell text-right whitespace-nowrap space-x-1">
-                  <button class="btn-ghost" @click="openKeys(u)">Keys</button>
-                  <button class="btn-ghost" @click="openEdit(u)">Edit</button>
-                  <button class="btn-ghost text-coral-shadow dark:text-coral-light" @click="removeUser(u)">Delete</button>
-                </td>
-              </tr>
+              <template v-for="u in users" :key="u.id">
+                <tr class="hover:bg-warm-50/60 dark:hover:bg-warm-800/30">
+                  <td class="td-cell">
+                    <div class="font-medium">{{ u.display_name || u.username }}</div>
+                    <div class="text-[11px] text-warm-400 dark:text-warm-500 font-mono">{{ u.username }}</div>
+                  </td>
+                  <td class="td-cell">
+                    <span class="gem-badge" :class="u.role === 'leader' ? 'bg-sapphire-light text-sapphire-shadow dark:bg-sapphire-shadow/30 dark:text-sapphire-light' : 'bg-warm-200/70 text-warm-600 dark:bg-warm-700/50 dark:text-warm-300'">
+                      {{ u.role }}
+                    </span>
+                  </td>
+                  <td class="td-cell"><StatusBadge :state="u.enabled ? 'active' : 'revoked'" :label="u.enabled ? 'enabled' : 'disabled'" /></td>
+                  <td class="td-cell text-right">{{ u.key_count ?? "—" }}</td>
+                  <td class="td-cell text-right">{{ u.active_access_count ?? "—" }}</td>
+                  <td class="td-cell text-right whitespace-nowrap space-x-1">
+                    <button class="btn-ghost" :class="expandedId === u.id && 'text-iolite dark:text-iolite-light'" @click="toggleAccess(u)">Access</button>
+                    <button class="btn-ghost" @click="openKeys(u)">Keys</button>
+                    <button class="btn-ghost" @click="openEdit(u)">Edit</button>
+                    <button class="btn-ghost text-coral-shadow dark:text-coral-light" @click="removeUser(u)">Delete</button>
+                  </td>
+                </tr>
+                <tr v-if="expandedId === u.id">
+                  <td colspan="6" class="td-cell bg-warm-50/60 dark:bg-warm-900/40">
+                    <div class="py-1 space-y-2">
+                      <div class="text-xs text-warm-500 dark:text-warm-400">
+                        Machine access for <span class="font-mono">{{ u.username }}</span> — granting creates/adopts the Unix account <span class="font-mono">{{ u.username }}</span> and installs their active keys; revoking removes only their managed keys.
+                      </div>
+                      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        <div v-for="m in machines" :key="m.id" class="flex items-center justify-between gap-2 rounded-lg border border-warm-200/60 dark:border-warm-700/60 px-3 py-1.5">
+                          <span class="text-sm font-medium truncate">{{ m.name }}</span>
+                          <span class="flex items-center gap-1.5 shrink-0">
+                            <StatusBadge v-if="requestFor(u, m)" :state="requestFor(u, m).state" />
+                            <KButton v-if="!hasAccess(u, m)" variant="secondary" :loading="accessBusy === busyKey(u, m)" :disabled="accessBusy !== null" @click="grantAccess(u, m)">Grant</KButton>
+                            <KButton v-else-if="requestFor(u, m).state === 'active'" variant="danger" :loading="accessBusy === busyKey(u, m)" :disabled="accessBusy !== null" @click="revokeAccess(u, m)">Revoke</KButton>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -131,17 +153,24 @@ import SectionCard from "@/components/common/SectionCard.vue"
 import StatusBadge from "@/components/common/StatusBadge.vue"
 import AddKeyForm from "@/components/keys/AddKeyForm.vue"
 import KeyList from "@/components/keys/KeyList.vue"
-import { usersAPI, keysAPI } from "@/utils/api"
+import { useActionPoll } from "@/composables/useActionPoll"
+import { usersAPI, keysAPI, machinesAPI, accessAPI } from "@/utils/api"
 
 const roleOptions = [
   { value: "member", label: "member" },
   { value: "leader", label: "leader" },
 ]
 
+const poll = useActionPoll()
+
 const users = ref([])
 const noOwnerKeys = ref([])
+const machines = ref([])
+const requests = ref([])
 const loading = ref(true)
 const loadingNoOwner = ref(true)
+const expandedId = ref(null)
+const accessBusy = ref(null)
 
 const form = reactive({ username: "", display_name: "", password: "", role: "member" })
 const creating = ref(false)
@@ -159,6 +188,75 @@ async function load() {
     users.value = await usersAPI.list()
   } finally {
     loading.value = false
+  }
+}
+
+async function loadAccessData() {
+  try {
+    const [ms, reqs] = await Promise.all([machinesAPI.list(), accessAPI.listRequests()])
+    machines.value = ms
+    requests.value = reqs
+  } catch {
+    machines.value = []
+    requests.value = []
+  }
+}
+
+function toggleAccess(u) {
+  expandedId.value = expandedId.value === u.id ? null : u.id
+}
+
+function busyKey(u, m) {
+  return `${u.id}:${m.id}`
+}
+
+// The user's most relevant request for this machine: an in-flight/active one
+// wins; otherwise the most recent historical one (failed/revoked/rejected).
+function requestFor(u, m) {
+  const rows = requests.value.filter((r) => r.user_id === u.id && r.machine_id === m.id)
+  if (!rows.length) return null
+  const live = rows.filter((r) => ["pending", "approved", "active"].includes(r.state))
+  const pool = live.length ? live : rows
+  return pool.reduce((a, b) => (b.id > a.id ? b : a))
+}
+
+function hasAccess(u, m) {
+  const req = requestFor(u, m)
+  return !!req && ["pending", "approved", "active"].includes(req.state)
+}
+
+async function grantAccess(u, m) {
+  accessBusy.value = busyKey(u, m)
+  try {
+    const res = await accessAPI.createRequest({ machine_id: m.id, user_id: u.id })
+    for (const aid of res.action_ids || []) await poll.start(aid)
+    ElMessage.success(`Access to ${m.name} granted for ${u.username}`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || "Failed to grant access")
+  } finally {
+    accessBusy.value = null
+    await Promise.all([loadAccessData(), load()])
+  }
+}
+
+async function revokeAccess(u, m) {
+  const req = requestFor(u, m)
+  if (!req) return
+  try {
+    await ElMessageBox.confirm(`Revoke ${u.username}'s access to ${m.name}? Their managed keys are removed; the account and data stay.`, "Revoke access", { type: "warning", confirmButtonText: "Revoke" })
+  } catch {
+    return
+  }
+  accessBusy.value = busyKey(u, m)
+  try {
+    const res = await accessAPI.revoke(req.id)
+    for (const aid of res.action_ids || []) await poll.start(aid)
+    ElMessage.success(`Access to ${m.name} revoked for ${u.username}`)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || "Failed to revoke access")
+  } finally {
+    accessBusy.value = null
+    await Promise.all([loadAccessData(), load()])
   }
 }
 
@@ -294,5 +392,6 @@ async function assignKey() {
 onMounted(() => {
   load()
   loadNoOwner()
+  loadAccessData()
 })
 </script>

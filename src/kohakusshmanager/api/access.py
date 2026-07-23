@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from kohakusshmanager import audit, permissions, remote, services, webhook
 from kohakusshmanager.auth import Principal, require_user
 from kohakusshmanager.db import db_write, to_iso_z
-from kohakusshmanager.models import AccessRequest, Machine, SSHKey
+from kohakusshmanager.models import AccessRequest, Machine, SSHKey, User
 
 router = APIRouter(prefix="/access", tags=["access"])
 
@@ -14,6 +14,7 @@ router = APIRouter(prefix="/access", tags=["access"])
 class AccessRequestCreate(BaseModel):
     machine_id: int
     username: str | None = None
+    user_id: int | None = None  # admin only: grant on behalf of this user
 
 
 class RejectRequest(BaseModel):
@@ -55,14 +56,32 @@ def create_request(
     if machine is None:
         raise HTTPException(status_code=404, detail="machine not found")
 
+    # Admins may grant on behalf of another panel user: the request then belongs
+    # to that user, so approval installs *their* active keys.
+    target_user = principal.user
+    if body.user_id is not None:
+        if not principal.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="only admins may create requests for another user",
+            )
+        target_user = User.get_or_none(User.id == body.user_id)
+        if target_user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        if not target_user.enabled:
+            raise HTTPException(status_code=400, detail="user is disabled")
+
     # Non-admins may only request access under their configured default account
     # (or their panel username if unset); a body-supplied target could otherwise
     # name root, another user, or the management account. Admins may target a
     # specific existing account.
     if principal.is_admin:
-        username = body.username or (
-            principal.user.username if principal.user else None
-        )
+        if target_user is not None:
+            username = (
+                body.username or target_user.default_account or target_user.username
+            )
+        else:
+            username = body.username
     elif principal.user is not None:
         username = principal.user.default_account or principal.user.username
     else:
@@ -77,13 +96,26 @@ def create_request(
             detail="cannot request access as the machine's management account",
         )
 
+    if target_user is not None:
+        existing = AccessRequest.get_or_none(
+            (AccessRequest.user == target_user)
+            & (AccessRequest.machine == machine)
+            & (AccessRequest.username == username)
+            & (AccessRequest.state.in_(["pending", "approved", "active"]))
+        )
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"an equivalent request is already {existing.state}",
+            )
+
     decision, reason = permissions.decide_access(principal, machine)
     if decision == "reject":
         raise HTTPException(status_code=403, detail=reason)
 
     req = db_write(
         lambda: AccessRequest.create(
-            user=principal.user,
+            user=target_user,
             machine=machine,
             username=username,
             requested_by=principal.name,

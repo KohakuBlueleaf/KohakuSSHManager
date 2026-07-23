@@ -164,6 +164,47 @@ def test_management_account_is_flagged_and_protected(client, fake):
     assert "mgr" in fm.accounts  # untouched
 
 
+def test_admin_grants_access_on_behalf_of_user(client, fake):
+    # Admin passes user_id -> the request belongs to that user, auto-approves,
+    # and installs *that user's* active keys.
+    fm, machine = _setup(client, fake, address="10.0.1.9", name="anode9")
+    user = create_user(client, "grace", "pw")
+    client.post(
+        "/api/keys", json={"public_key": make_pubkey("grace@x"), "user_id": user["id"]}
+    )
+    resp = client.post(
+        "/api/access/requests",
+        json={"machine_id": machine["id"], "user_id": user["id"]},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["state"] == "active"
+    assert body["user_id"] == user["id"]
+    assert body["username"] == "grace"
+    assert "grace" in fm.accounts
+    assert fm.authorized.get("grace", "").strip() != ""
+
+    # An equivalent second grant is rejected instead of duplicated.
+    dup = client.post(
+        "/api/access/requests",
+        json={"machine_id": machine["id"], "user_id": user["id"]},
+    )
+    assert dup.status_code == 409
+
+
+def test_member_cannot_grant_for_another_user(client, fake):
+    _setup(client, fake, address="10.0.1.10", name="anode10")
+    create_user(client, "alice", "pw")
+    bob = create_user(client, "bob", "pw")
+    client.post("/api/auth/logout")
+    login_user(client, "alice", "pw")
+    resp = client.post(
+        "/api/access/requests",
+        json={"machine_id": 1, "user_id": bob["id"]},
+    )
+    assert resp.status_code == 403
+
+
 def test_member_cannot_see_others_data(client, fake):
     _setup(client, fake, address="10.0.1.3", name="anode3")
     alice = create_user(client, "alice", "pw")
