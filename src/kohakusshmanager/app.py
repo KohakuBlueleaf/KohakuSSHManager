@@ -182,6 +182,14 @@ app = create_app()
 
 
 def main() -> None:
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "service":
+        from kohakusshmanager.service import main as service_main
+
+        service_main(sys.argv[2:])
+        return
+
     # log_config=None keeps uvicorn from installing its own handlers, so its
     # logs flow through our loguru interception (see logger._intercept_stdlib).
     uvicorn.run(
