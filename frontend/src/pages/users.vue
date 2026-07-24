@@ -18,6 +18,9 @@
     </SectionCard>
 
     <SectionCard title="All users" icon="i-carbon-user-multiple">
+      <template #actions>
+        <KButton variant="secondary" icon="i-carbon-renew" :loading="accessBusy === 'sync:all'" :disabled="accessBusy !== null" @click="syncAllUsers">Sync all keys</KButton>
+      </template>
       <LoadingBlock v-if="loading" :rows="4" />
       <template v-else>
         <div v-if="users.length" class="table-wrap">
@@ -157,7 +160,7 @@ import StatusBadge from "@/components/common/StatusBadge.vue"
 import AddKeyForm from "@/components/keys/AddKeyForm.vue"
 import KeyList from "@/components/keys/KeyList.vue"
 import { useActionPoll } from "@/composables/useActionPoll"
-import { usersAPI, keysAPI, machinesAPI, accessAPI } from "@/utils/api"
+import { usersAPI, keysAPI, machinesAPI, accessAPI, actionsAPI } from "@/utils/api"
 import { requestStateLabel } from "@/utils/format"
 
 const roleOptions = [
@@ -243,22 +246,71 @@ async function grantAccess(u, m) {
   }
 }
 
+// Poll many actions to a terminal state; returns failure/unfinished counts.
+const TERMINAL = ["succeeded", "failed", "interrupted"]
+async function pollActions(ids, timeoutMs = 180000) {
+  const pending = new Set(ids)
+  let failed = 0
+  const deadline = Date.now() + timeoutMs
+  while (pending.size && Date.now() < deadline) {
+    for (const id of [...pending]) {
+      try {
+        const row = await actionsAPI.get(id)
+        if (TERMINAL.includes(row.state)) {
+          pending.delete(id)
+          if (row.state !== "succeeded") failed += 1
+        }
+      } catch {
+        // transient poll error — retry next round
+      }
+    }
+    if (pending.size) await new Promise((r) => setTimeout(r, 2000))
+  }
+  return { failed, unfinished: pending.size }
+}
+
+function emptySyncMessage(res, who) {
+  if (res.active_access === 0) return `${who}: no active machine access`
+  if (res.active_keys === 0) return `${who}: no active SSH keys — add one first`
+  return `${who}: nothing to sync (machine accounts not discovered yet? refresh the machine)`
+}
+
 async function syncUserKeys(u) {
   accessBusy.value = `sync:${u.id}`
   try {
     const res = await accessAPI.sync({ user_id: u.id })
     const ids = res.action_ids || []
-    let failed = 0
-    for (const aid of ids) {
-      const row = await poll.start(aid)
-      if (row.state !== "succeeded") failed += 1
+    if (!ids.length) {
+      ElMessage.info(emptySyncMessage(res, u.username))
+    } else {
+      const { failed, unfinished } = await pollActions(ids)
+      if (failed || unfinished) ElMessage.warning(`Sync for ${u.username}: ${failed} failed, ${unfinished} still running of ${ids.length}`)
+      else ElMessage.success(`Keys synced for ${u.username} (${ids.length} action(s))`)
     }
-    if (!ids.length) ElMessage.info(`${u.username} has no active access to sync`)
-    else if (failed) ElMessage.warning(`Sync for ${u.username}: ${failed} of ${ids.length} action(s) failed`)
-    else ElMessage.success(`Keys synced for ${u.username} (${ids.length} action(s))`)
     await Promise.all([loadAccessData(), load()])
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || "Sync failed")
+  } finally {
+    accessBusy.value = null
+  }
+}
+
+async function syncAllUsers() {
+  accessBusy.value = "sync:all"
+  try {
+    const res = await accessAPI.sync({ all_users: true })
+    const ids = res.action_ids || []
+    if (!ids.length) {
+      ElMessage.info("Nothing to sync for any user")
+    } else {
+      ElMessage.info(`Dispatched ${ids.length} action(s) for ${res.synced_users.length} user(s)…`)
+      const { failed, unfinished } = await pollActions(ids)
+      if (failed || unfinished) ElMessage.warning(`Batch sync: ${failed} failed, ${unfinished} still running of ${ids.length}`)
+      else ElMessage.success(`Batch sync complete: ${ids.length} action(s), ${res.synced_users.length} user(s)`)
+    }
+    await Promise.all([loadAccessData(), load()])
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || "Batch sync failed")
   } finally {
     accessBusy.value = null
   }

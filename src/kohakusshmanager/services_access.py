@@ -308,10 +308,25 @@ def sync_user_keys(user: User, actor: str) -> list[RemoteAction]:
     )
     active_keys = active_user_keys(user)
     for req in requests:
-        if req.account is None:
+        account = req.account
+        if account is None:
+            # Heal requests marked active without an account link (rows
+            # imported or edited outside the approve flow).
+            account = LocalAccount.get_or_none(
+                (LocalAccount.machine == req.machine)
+                & (LocalAccount.username == req.username)
+            )
+            if account is not None:
+
+                def _link(r=req, a=account):
+                    r.account = a
+                    r.save()
+
+                db_write(_link)
+        if account is None:
             continue
         for key in active_keys:
-            actions.append(install_key_action(req.machine, req.account, key, actor))
+            actions.append(install_key_action(req.machine, account, key, actor))
     revoked = SSHKey.select().where((SSHKey.user == user) & (SSHKey.state == "revoked"))
     for key in revoked:
         links = AccountKey.select().where(

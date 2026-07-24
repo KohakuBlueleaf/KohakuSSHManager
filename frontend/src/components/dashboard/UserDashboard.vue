@@ -210,8 +210,11 @@ async function syncKeys() {
       const row = await poll.start(aid)
       if (row.state !== "succeeded") failed += 1
     }
-    if (!ids.length) ElMessage.info("Nothing to sync — no active machine access")
-    else if (failed) ElMessage.warning(`Sync finished with ${failed} failed action(s) — check with an admin`)
+    if (!ids.length) {
+      if (res.active_access === 0) ElMessage.info("Nothing to sync — you have no active machine access yet")
+      else if (res.active_keys === 0) ElMessage.info("Nothing to sync — add an SSH key first")
+      else ElMessage.info("Nothing to sync — ask an admin to refresh your machines")
+    } else if (failed) ElMessage.warning(`Sync finished with ${failed} failed action(s) — check with an admin`)
     else ElMessage.success(`Keys synced (${ids.length} action(s))`)
     await Promise.all([reloadKeys(), reloadAccess()])
   } catch (err) {

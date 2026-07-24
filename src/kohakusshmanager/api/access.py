@@ -23,6 +23,7 @@ class RejectRequest(BaseModel):
 
 class SyncBody(BaseModel):
     user_id: int | None = None  # admin only: sync another user's keys
+    all_users: bool = False  # admin only: batch-sync every enabled user
 
 
 def serialize_request(req: AccessRequest) -> dict:
@@ -219,8 +220,27 @@ def revoke(request_id: int, principal: Principal = Depends(require_user)):
 
 @router.post("/sync")
 def sync_keys(body: SyncBody, principal: Principal = Depends(require_user)):
-    """Reconcile the user's machines with the panel: install every active key
-    on every active access link, remove revoked leftovers. Idempotent."""
+    """Reconcile machines with the panel: install every active key on every
+    active access link, remove revoked leftovers. Idempotent."""
+    if body.all_users:
+        if not principal.is_admin:
+            raise HTTPException(
+                status_code=403, detail="only admins may batch-sync all users"
+            )
+        action_ids: list[int] = []
+        synced: list[str] = []
+        for user in User.select().where(User.enabled == True):  # noqa: E712
+            acts = services.sync_user_keys(user, principal.name)
+            if acts:
+                synced.append(user.username)
+                action_ids.extend(a.id for a in acts)
+        audit.record(
+            principal.name,
+            "keys_synced_all",
+            detail=f"{len(action_ids)} actions for {len(synced)} users",
+        )
+        return {"action_ids": action_ids, "synced_users": synced}
+
     if body.user_id is not None:
         if not principal.is_admin:
             raise HTTPException(
@@ -242,7 +262,22 @@ def sync_keys(body: SyncBody, principal: Principal = Depends(require_user)):
         target=target.username,
         detail=f"{len(actions)} actions dispatched",
     )
-    return {"action_ids": [a.id for a in actions]}
+    # Diagnostics so the UI can explain an empty sync instead of guessing.
+    active_access = (
+        AccessRequest.select()
+        .where((AccessRequest.user == target) & (AccessRequest.state == "active"))
+        .count()
+    )
+    active_keys = (
+        SSHKey.select()
+        .where((SSHKey.user == target) & (SSHKey.state == "active"))
+        .count()
+    )
+    return {
+        "action_ids": [a.id for a in actions],
+        "active_access": active_access,
+        "active_keys": active_keys,
+    }
 
 
 @router.get("/overview")

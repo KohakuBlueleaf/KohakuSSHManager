@@ -139,6 +139,42 @@ def test_member_syncs_own_keys(client, fake):
     assert other.status_code == 403
 
 
+def test_sync_heals_active_request_without_account_link(client, fake):
+    # Rows imported/edited outside the approve flow can be active with
+    # account_id NULL; sync must resolve the account itself, not skip.
+    from kohakusshmanager.models import AccessRequest
+
+    fm, machine, user = _active_access(client, fake)
+    AccessRequest.update(account=None).where(AccessRequest.user == user["id"]).execute()
+    fm.authorized["alice"] = ""  # keys "missing" on the machine
+
+    resp = client.post("/api/access/sync", json={"user_id": user["id"]})
+    assert resp.status_code == 200
+    assert resp.json()["action_ids"]
+    assert fm.authorized.get("alice", "").count("ssh-ed25519") == 1
+    req = AccessRequest.get(AccessRequest.user == user["id"])
+    assert req.account_id is not None  # link healed
+
+
+def test_admin_batch_sync_all_users(client, fake):
+    fm, machine, user = _active_access(client, fake)
+    client.post(
+        "/api/keys", json={"public_key": make_pubkey("extra"), "user_id": user["id"]}
+    )
+    resp = client.post("/api/access/sync", json={"all_users": True})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "alice" in body["synced_users"]
+    assert body["action_ids"]
+    assert fm.authorized.get("alice", "").count("ssh-ed25519") == 2
+
+    # Members may not batch-sync.
+    client.post("/api/auth/logout")
+    login_user(client, "alice", "pw")
+    denied = client.post("/api/access/sync", json={"all_users": True})
+    assert denied.status_code == 403
+
+
 def test_sync_removes_revoked_leftovers(client, fake):
     fm, machine, user = _active_access(client, fake)
     key = client.get(f"/api/keys?user_id={user['id']}").json()[0]
