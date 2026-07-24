@@ -29,6 +29,7 @@ from kohakusshmanager.services_access import (
     revoke_request,
     revoke_user_key,
     set_account_groups,
+    sync_user_keys,
 )
 from kohakusshmanager.services_base import (
     complete_action,
@@ -59,6 +60,7 @@ __all__ = [
     "revoke_request",
     "install_user_key_everywhere",
     "revoke_user_key",
+    "sync_user_keys",
     "set_account_groups",
     "delete_local_account",
     "initialize_machine_preview",

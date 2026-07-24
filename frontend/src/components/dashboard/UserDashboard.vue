@@ -65,7 +65,10 @@
     </SectionCard>
 
     <!-- My SSH keys (add key at the bottom) -->
-    <SectionCard title="My SSH keys" icon="i-carbon-password">
+    <SectionCard title="My SSH keys" icon="i-carbon-password" subtitle="Sync pushes your active keys to every machine you have access to and cleans up revoked ones.">
+      <template #actions>
+        <KButton variant="secondary" icon="i-carbon-renew" :loading="syncing" @click="syncKeys">Sync keys to machines</KButton>
+      </template>
       <LoadingBlock v-if="loading.keys" />
       <template v-else>
         <KeyList v-if="keys.length" :keys="keys" @revoke="revokeKey" />
@@ -88,10 +91,12 @@ import AccessMatrix from "@/components/access/AccessMatrix.vue"
 import RequestAccessForm from "@/components/access/RequestAccessForm.vue"
 import RequestTable from "@/components/access/RequestTable.vue"
 import EmptyState from "@/components/common/EmptyState.vue"
+import KButton from "@/components/common/KButton.vue"
 import LoadingBlock from "@/components/common/LoadingBlock.vue"
 import SectionCard from "@/components/common/SectionCard.vue"
 import AddKeyForm from "@/components/keys/AddKeyForm.vue"
 import KeyList from "@/components/keys/KeyList.vue"
+import { useActionPoll } from "@/composables/useActionPoll"
 import { useAuthStore } from "@/stores/auth"
 import { keysAPI, accessAPI, machinesAPI, storageAPI } from "@/utils/api"
 import { humanBytes, fromNow, fullTime } from "@/utils/format"
@@ -105,6 +110,8 @@ const machines = ref([])
 const storage = ref([])
 
 const loading = reactive({ keys: true, access: true, requests: true, storage: true })
+const syncing = ref(false)
+const poll = useActionPoll()
 
 // Prefer the user's configured default machine account, else their panel name.
 const defaultTarget = computed(() => auth.defaultAccount || auth.name)
@@ -191,6 +198,27 @@ async function revokeAccess(row) {
 
 function onRequested() {
   reloadAccess()
+}
+
+async function syncKeys() {
+  syncing.value = true
+  try {
+    const res = await accessAPI.sync()
+    const ids = res.action_ids || []
+    let failed = 0
+    for (const aid of ids) {
+      const row = await poll.start(aid)
+      if (row.state !== "succeeded") failed += 1
+    }
+    if (!ids.length) ElMessage.info("Nothing to sync — no active machine access")
+    else if (failed) ElMessage.warning(`Sync finished with ${failed} failed action(s) — check with an admin`)
+    else ElMessage.success(`Keys synced (${ids.length} action(s))`)
+    await Promise.all([reloadKeys(), reloadAccess()])
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || "Sync failed")
+  } finally {
+    syncing.value = false
+  }
 }
 
 onMounted(() => {

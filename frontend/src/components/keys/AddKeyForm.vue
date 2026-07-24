@@ -10,7 +10,7 @@
 
     <label v-if="showInstall" class="flex items-center gap-2 text-sm text-warm-700 dark:text-warm-300 cursor-pointer">
       <input v-model="install" type="checkbox" class="accent-iolite" />
-      Install to my active machine accounts now
+      {{ userId != null ? "Install to this user's active machine accounts now" : "Install to my active machine accounts now" }}
     </label>
 
     <div class="flex justify-end">
@@ -39,7 +39,8 @@ const emit = defineEmits(["added"])
 
 const publicKey = ref("")
 const comment = ref("")
-const install = ref(false)
+// Default ON: a key that never lands on any machine is the surprising case.
+const install = ref(true)
 const loading = ref(false)
 
 async function submit() {
@@ -54,7 +55,7 @@ async function submit() {
     ElMessage.success("Key added")
     publicKey.value = ""
     comment.value = ""
-    install.value = false
+    install.value = true
     emit("added", created)
   } catch (err) {
     ElMessage.error(err?.response?.data?.detail || "Failed to add key")

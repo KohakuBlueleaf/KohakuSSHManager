@@ -221,6 +221,10 @@ export const accessAPI = {
     const { data } = await api.get("/access/overview")
     return data
   },
+  async sync(body = {}) {
+    const { data } = await api.post("/access/sync", body)
+    return data
+  },
 }
 
 /** Remote actions (poll targets) */

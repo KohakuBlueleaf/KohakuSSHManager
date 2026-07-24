@@ -79,6 +79,80 @@ def test_revoke_schedules_removal_even_when_unobserved(client, fake):
     assert SSHKey.get_by_id(key_id).state == "revoked"
 
 
+def test_revoked_key_readd_reactivates_and_reinstalls(client, fake):
+    fm, machine, user = _active_access(client, fake)
+    key = client.get(f"/api/keys?user_id={user['id']}").json()[0]
+    client.post(f"/api/keys/{key['id']}/revoke")
+    assert fm.authorized.get("alice", "").strip() == ""
+
+    # Alice re-adds the exact same public key: resurrected, not 409.
+    client.post("/api/auth/logout")
+    login_user(client, "alice", "pw")
+    resp = client.post(
+        "/api/keys", json={"public_key": key["public_key"], "install": True}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["key"]["id"] == key["id"]  # same row reactivated
+    assert body["key"]["state"] == "active"
+    assert body["action_ids"]  # install=True reinstalled it
+    assert fm.authorized.get("alice", "").strip() != ""
+
+
+def test_readd_of_foreign_key_still_blocked(client, fake):
+    fm, machine, user = _active_access(client, fake)
+    key = client.get(f"/api/keys?user_id={user['id']}").json()[0]
+    client.post(f"/api/keys/{key['id']}/revoke")
+    create_user(client, "mallory", "pw")
+    client.post("/api/auth/logout")
+    login_user(client, "mallory", "pw")
+    resp = client.post("/api/keys", json={"public_key": key["public_key"]})
+    assert resp.status_code == 409
+
+
+def test_sync_installs_missing_keys(client, fake):
+    fm, machine, user = _active_access(client, fake)
+    # Second key added WITHOUT install -> in the DB, not on the machine.
+    client.post(
+        "/api/keys", json={"public_key": make_pubkey("second"), "user_id": user["id"]}
+    )
+    assert fm.authorized.get("alice", "").count("ssh-ed25519") == 1
+
+    resp = client.post("/api/access/sync", json={"user_id": user["id"]})
+    assert resp.status_code == 200
+    assert resp.json()["action_ids"]
+    assert fm.authorized.get("alice", "").count("ssh-ed25519") == 2
+
+
+def test_member_syncs_own_keys(client, fake):
+    fm, machine, user = _active_access(client, fake)
+    client.post(
+        "/api/keys", json={"public_key": make_pubkey("later"), "user_id": user["id"]}
+    )
+    client.post("/api/auth/logout")
+    login_user(client, "alice", "pw")
+    resp = client.post("/api/access/sync", json={})
+    assert resp.status_code == 200
+    assert fm.authorized.get("alice", "").count("ssh-ed25519") == 2
+    # Members cannot sync someone else.
+    other = client.post("/api/access/sync", json={"user_id": 999})
+    assert other.status_code == 403
+
+
+def test_sync_removes_revoked_leftovers(client, fake):
+    fm, machine, user = _active_access(client, fake)
+    key = client.get(f"/api/keys?user_id={user['id']}").json()[0]
+    client.post(f"/api/keys/{key['id']}/revoke")
+    # Simulate a machine that missed the removal (e.g. offline at the time):
+    # the line is back on disk and the panel still believes it is observed.
+    fm.authorized["alice"] = key["public_key"] + "\n"
+    AccountKey.update(observed=True).where(AccountKey.key == key["id"]).execute()
+
+    resp = client.post("/api/access/sync", json={"user_id": user["id"]})
+    assert resp.status_code == 200
+    assert fm.authorized.get("alice", "").strip() == ""
+
+
 def test_no_owner_import_and_assign(client, fake):
     login_admin(client)
     # Admin imports a key with no user -> no_owner.

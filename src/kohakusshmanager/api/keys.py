@@ -60,9 +60,6 @@ def add_key(body: KeyCreate, principal: Principal = Depends(require_user)):
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if SSHKey.get_or_none(SSHKey.fingerprint == parsed.fingerprint) is not None:
-        raise HTTPException(status_code=409, detail="key already exists")
-
     owner: User | None
     if principal.is_admin:
         owner = None
@@ -70,25 +67,50 @@ def add_key(body: KeyCreate, principal: Principal = Depends(require_user)):
             owner = User.get_or_none(User.id == body.user_id)
             if owner is None:
                 raise HTTPException(status_code=404, detail="user not found")
-        state = "active" if owner is not None else "no_owner"
     else:
         owner = principal.user
-        state = "active"
 
-    key = db_write(
-        lambda: SSHKey.create(
-            user=owner,
-            public_key=parsed.normalized,
-            fingerprint=parsed.fingerprint,
-            comment=body.comment or parsed.comment,
-            state=state,
+    existing = SSHKey.get_or_none(SSHKey.fingerprint == parsed.fingerprint)
+    if existing is not None:
+        if existing.state == "active":
+            raise HTTPException(status_code=409, detail="key already exists")
+        # Revoked / no-owner keys are resurrected instead of blocking the
+        # re-add forever — but never across users: a member cannot claim a key
+        # that belongs to someone else.
+        if (
+            not principal.is_admin
+            and existing.user_id is not None
+            and existing.user_id != principal.user_id
+        ):
+            raise HTTPException(status_code=409, detail="key belongs to another user")
+        new_owner = owner if owner is not None else existing.user
+
+        def _reactivate():
+            existing.user = new_owner
+            existing.state = "active" if new_owner is not None else "no_owner"
+            if body.comment:
+                existing.comment = body.comment
+            existing.save()
+
+        db_write(_reactivate)
+        audit.record(principal.name, "key_reactivated", target=parsed.fingerprint)
+        key = SSHKey.get_by_id(existing.id)
+    else:
+        state = "active" if owner is not None else "no_owner"
+        key = db_write(
+            lambda: SSHKey.create(
+                user=owner,
+                public_key=parsed.normalized,
+                fingerprint=parsed.fingerprint,
+                comment=body.comment or parsed.comment,
+                state=state,
+            )
         )
-    )
-    audit.record(principal.name, "key_added", target=parsed.fingerprint)
+        audit.record(principal.name, "key_added", target=parsed.fingerprint)
 
     action_ids: list[int] = []
-    if body.install and owner is not None:
-        actions = services.install_user_key_everywhere(owner, key, principal.name)
+    if body.install and key.user is not None:
+        actions = services.install_user_key_everywhere(key.user, key, principal.name)
         action_ids = [a.id for a in actions]
 
     return {"key": serialize_key(key), "action_ids": action_ids}

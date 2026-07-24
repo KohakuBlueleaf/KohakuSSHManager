@@ -21,6 +21,10 @@ class RejectRequest(BaseModel):
     reason: str = ""
 
 
+class SyncBody(BaseModel):
+    user_id: int | None = None  # admin only: sync another user's keys
+
+
 def serialize_request(req: AccessRequest) -> dict:
     return {
         "id": req.id,
@@ -210,6 +214,34 @@ def revoke(request_id: int, principal: Principal = Depends(require_user)):
         raise HTTPException(status_code=403, detail="not permitted to revoke")
     actions = services.revoke_request(req, principal.name)
     audit.record(principal.name, "request_revoked", target=req.machine.name)
+    return {"action_ids": [a.id for a in actions]}
+
+
+@router.post("/sync")
+def sync_keys(body: SyncBody, principal: Principal = Depends(require_user)):
+    """Reconcile the user's machines with the panel: install every active key
+    on every active access link, remove revoked leftovers. Idempotent."""
+    if body.user_id is not None:
+        if not principal.is_admin:
+            raise HTTPException(
+                status_code=403, detail="only admins may sync another user"
+            )
+        target = User.get_or_none(User.id == body.user_id)
+        if target is None:
+            raise HTTPException(status_code=404, detail="user not found")
+    else:
+        target = principal.user
+        if target is None:
+            raise HTTPException(
+                status_code=400, detail="the admin principal must specify user_id"
+            )
+    actions = services.sync_user_keys(target, principal.name)
+    audit.record(
+        principal.name,
+        "keys_synced",
+        target=target.username,
+        detail=f"{len(actions)} actions dispatched",
+    )
     return {"action_ids": [a.id for a in actions]}
 
 

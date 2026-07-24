@@ -44,7 +44,7 @@ def build_unit(python: str, workdir: str, user: str | None, scope: str) -> str:
 
 
 def _run(cmd: list[str]) -> None:
-    print(f"  $ {' '.join(cmd)}")
+    print(f"  running: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
 

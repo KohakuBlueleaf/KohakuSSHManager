@@ -295,6 +295,36 @@ def install_user_key_everywhere(
     return actions
 
 
+def sync_user_keys(user: User, actor: str) -> list[RemoteAction]:
+    """Reconcile machines with the panel state for one user.
+
+    Installs every active key on every active access link and removes revoked
+    keys still observed on the user's own accounts. Each dispatched action is
+    idempotent, so syncing repeatedly is safe.
+    """
+    actions: list[RemoteAction] = []
+    requests = AccessRequest.select().where(
+        (AccessRequest.user == user) & (AccessRequest.state == "active")
+    )
+    active_keys = active_user_keys(user)
+    for req in requests:
+        if req.account is None:
+            continue
+        for key in active_keys:
+            actions.append(install_key_action(req.machine, req.account, key, actor))
+    revoked = SSHKey.select().where((SSHKey.user == user) & (SSHKey.state == "revoked"))
+    for key in revoked:
+        links = AccountKey.select().where(
+            (AccountKey.key == key) & (AccountKey.observed == True)  # noqa: E712
+        )
+        for ak in links:
+            if ak.account.user_id == user.id:
+                actions.append(
+                    remove_key_action(ak.account.machine, ak.account, key, actor)
+                )
+    return actions
+
+
 def revoke_user_key(sshkey: SSHKey, actor: str) -> list[RemoteAction]:
     def _revoke():
         sshkey.state = "revoked"

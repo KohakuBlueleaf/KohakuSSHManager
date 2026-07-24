@@ -57,8 +57,11 @@
                 <tr v-if="expandedId === u.id">
                   <td colspan="6" class="td-cell bg-warm-50/60 dark:bg-warm-900/40">
                     <div class="py-1 space-y-2">
-                      <div class="text-xs text-warm-500 dark:text-warm-400">
-                        Machine access for <span class="font-mono">{{ u.username }}</span> — granting creates/adopts the Unix account <span class="font-mono">{{ u.username }}</span> and installs their active keys; revoking removes only their managed keys.
+                      <div class="flex items-center justify-between gap-3">
+                        <div class="text-xs text-warm-500 dark:text-warm-400">
+                          Machine access for <span class="font-mono">{{ u.username }}</span> — granting creates/adopts the Unix account <span class="font-mono">{{ u.username }}</span> and installs their active keys; revoking removes only their managed keys.
+                        </div>
+                        <KButton variant="secondary" icon="i-carbon-renew" :loading="accessBusy === `sync:${u.id}`" :disabled="accessBusy !== null" @click="syncUserKeys(u)">Sync keys</KButton>
                       </div>
                       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                         <div v-for="m in machines" :key="m.id" class="flex items-center justify-between gap-2 rounded-lg border border-warm-200/60 dark:border-warm-700/60 px-3 py-1.5">
@@ -116,7 +119,7 @@
           <EmptyState v-else icon="i-carbon-password" text="No keys for this user" />
           <div class="border-t border-warm-100 dark:border-warm-800 pt-4">
             <div class="field-label">Add a key for this user</div>
-            <AddKeyForm :user-id="keysModal.user?.id" :show-install="false" @added="reloadUserKeys" />
+            <AddKeyForm :user-id="keysModal.user?.id" :show-install="true" @added="reloadUserKeys" />
           </div>
         </template>
       </div>
@@ -237,6 +240,27 @@ async function grantAccess(u, m) {
   } finally {
     accessBusy.value = null
     await Promise.all([loadAccessData(), load()])
+  }
+}
+
+async function syncUserKeys(u) {
+  accessBusy.value = `sync:${u.id}`
+  try {
+    const res = await accessAPI.sync({ user_id: u.id })
+    const ids = res.action_ids || []
+    let failed = 0
+    for (const aid of ids) {
+      const row = await poll.start(aid)
+      if (row.state !== "succeeded") failed += 1
+    }
+    if (!ids.length) ElMessage.info(`${u.username} has no active access to sync`)
+    else if (failed) ElMessage.warning(`Sync for ${u.username}: ${failed} of ${ids.length} action(s) failed`)
+    else ElMessage.success(`Keys synced for ${u.username} (${ids.length} action(s))`)
+    await Promise.all([loadAccessData(), load()])
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || "Sync failed")
+  } finally {
+    accessBusy.value = null
   }
 }
 
